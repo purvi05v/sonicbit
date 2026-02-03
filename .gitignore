@@ -1,0 +1,18 @@
+# Prerequisites
+*.d
+*.o
+*.obj
+*.exe
+sonicbit
+
+# IDE Settings (Optional but recommended)
+.vscode/
+.idea/
+*.swp
+*.DS_Store
+
+# Build folders (If you use Visual Studio or CMake later)
+Debug/
+Release/
+build/
+x64/
