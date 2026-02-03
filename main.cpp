@@ -7,6 +7,7 @@
 #include "RingBuffer.h"
 #include "DeltaEncoder.h"
 #include "FrequencyTable.h"
+#include "HuffmanBuilder.h"
 #include <iostream>
 #include <vector>
 #include <thread>
@@ -64,15 +65,27 @@ int main()
 
     bool running = true;
     FrequencyTable freqTable;
-
+    HuffmanBuilder huffBuilder; 
     while (running) {
         if (audioBuffer.available() >= BLOCK_SIZE) {
             audioBuffer.pop(rawBlock, BLOCK_SIZE);
             DeltaEncoder::encode(rawBlock, compressedSymbols);
             freqTable.scan(compressedSymbols);
-            std::cout << "\r[Block Processed]";
-            freqTable.printTopStats(); 
-            std::cout << "      " << std::flush;
+            huffBuilder.build(freqTable);
+
+            int topSym = -1;
+            uint32_t maxCount = 0;
+            for(int i=0; i<65536; i++) {
+                if(freqTable.counts[i] > maxCount) {
+                    maxCount = freqTable.counts[i];
+                    topSym = i;
+                }
+            }
+            int zeroLen = huffBuilder.codeLengths[0]; 
+            int topLen = (topSym != -1) ? huffBuilder.codeLengths[topSym] : 0;
+            std::cout << "\r[Tree Built] TopSym: " << topSym 
+                      << " (" << topLen << " bits) | Sym '0': " 
+                      << zeroLen << " bits     " << std::flush;
         }
         else {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
