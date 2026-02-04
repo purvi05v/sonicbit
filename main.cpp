@@ -1,91 +1,58 @@
 /*
- * SonicBit - Real-Time Audio Capture & Delta Encoding
+ * SonicBit - The Real-Time Lossless Audio Codec
  */
 
 #define MINIAUDIO_IMPLEMENTATION
 #include "miniaudio.h"
+
 #include "RingBuffer.h"
-#include "DeltaEncoder.h"
-#include "FrequencyTable.h"
-#include "HuffmanBuilder.h"
+#include "SonicBit.h" 
 #include <iostream>
 #include <vector>
 #include <thread>
 #include <chrono>
-#include <cmath>
 #include <iomanip>
 
 const int SAMPLE_RATE = 44100;
-const int BLOCK_SIZE = 4096;  
-const int BUFFER_SECONDS = 1; 
-
+const int BLOCK_SIZE = 4096;
+const int BUFFER_SECONDS = 1;
 LockFreeRingBuffer audioBuffer(SAMPLE_RATE * BUFFER_SECONDS);
-void data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount)
-{
-    const int16_t* samples = (const int16_t*)pInput;
-    if (!audioBuffer.push(samples, frameCount)) {
-        // fprintf(stderr, "X"); 
-    }
 
-    (void)pOutput; 
+void data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount) {
+    if (!audioBuffer.push((const int16_t*)pInput, frameCount)) {
+    }
 }
 
-int main()
-{
-    ma_device_config deviceConfig = ma_device_config_init(ma_device_type_capture);
-    deviceConfig.capture.format   = ma_format_s16;
-    deviceConfig.capture.channels = 1;
-    deviceConfig.sampleRate       = SAMPLE_RATE;
-    deviceConfig.dataCallback     = data_callback;
+int main() {
+    ma_device_config config = ma_device_config_init(ma_device_type_capture);
+    config.capture.format = ma_format_s16;
+    config.capture.channels = 1; 
+    config.sampleRate = SAMPLE_RATE;
+    config.dataCallback = data_callback;
 
     ma_device device;
-    if (ma_device_init(NULL, &deviceConfig, &device) != MA_SUCCESS) {
-        std::cerr << "Failed to initialize capture device." << std::endl;
-        return -1;
-    }
-
-    if (ma_device_start(&device) != MA_SUCCESS) {
-        std::cerr << "Failed to start device." << std::endl;
-        ma_device_uninit(&device);
-        return -1;
-    }
-
-    std::cout << "==========================================" << std::endl;
-    std::cout << " SonicBit Engine: Delta Encoding Active" << std::endl;
-    std::cout << "==========================================" << std::endl;
-
+    ma_device_init(NULL, &config, &device);
+    ma_device_start(&device);
+    std::cout << "SonicBit Engine Started..." << std::endl;
+    SonicBit codec;
     std::vector<int16_t> rawBlock;
     rawBlock.reserve(BLOCK_SIZE);
 
-    std::vector<uint16_t> compressedSymbols;
-    compressedSymbols.reserve(BLOCK_SIZE);
-
-    std::vector<int16_t> restoredBlock; 
-    restoredBlock.reserve(BLOCK_SIZE);
-
     bool running = true;
-    FrequencyTable freqTable;
-    HuffmanBuilder huffBuilder; 
     while (running) {
         if (audioBuffer.available() >= BLOCK_SIZE) {
+            
             audioBuffer.pop(rawBlock, BLOCK_SIZE);
-            DeltaEncoder::encode(rawBlock, compressedSymbols);
-            freqTable.scan(compressedSymbols);
-            huffBuilder.build(freqTable);
+            const std::vector<uint8_t>& compressedData = codec.compress(rawBlock);
+            size_t orgSize = BLOCK_SIZE * sizeof(int16_t);
+            size_t compSize = compressedData.size();
+            float ratio = codec.getLastRatio(orgSize);
+            float savings = 100.0f * (1.0f - ((float)compSize / (float)orgSize));
 
-            int topSym = -1;
-            uint32_t maxCount = 0;
-            for(int i=0; i<65536; i++) {
-                if(freqTable.counts[i] > maxCount) {
-                    maxCount = freqTable.counts[i];
-                    topSym = i;
-                }
-            }
-            int zeroLen = huffBuilder.codeLengths[0]; 
-            int topLen = (topSym != -1) ? huffBuilder.codeLengths[topSym] : 0;
-            std::cout << "\r[Tree Built] TopSym: " << topSym 
-                      << " (" << topLen << " bits) | Sym '0': " 
-                      << zeroLen << " bits     " << std::flush;
+            std::cout << "\r[SonicBit] " 
+                      << compSize << " bytes "
+                      << "| Ratio: " << std::fixed << std::setprecision(1) << ratio << ":1 "
+                      << "| Saved: " << (int)savings << "%     " << std::flush;
         }
         else {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
